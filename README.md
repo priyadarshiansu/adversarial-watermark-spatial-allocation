@@ -1,5 +1,3 @@
-# adversarial-watermark-spatial-allocation
-CAP5610 final project on spatial allocation of adversarial perturbations and invisible watermarks.
 # Spatial Allocation of Adversarial and Watermark Signals
 
 CAP5610 Final Project — Intro to Machine Learning
