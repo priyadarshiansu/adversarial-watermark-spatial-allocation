@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------
+# Dataset images (download separately, see data/README.md)
+data/raw/
+data/processed/
+# Model weights / checkpoints
+*.pth
+*.pt
+*.ckpt
+# Large experiment outputs (commit summary CSVs, not per-run dumps)
+results/runs/
+# uv
+.venv/
