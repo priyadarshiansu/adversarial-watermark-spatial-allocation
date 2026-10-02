@@ -1,0 +1,44 @@
+[project]
+name = "awsa"
+version = "0.1.0"
+description = "Spatial allocation of adversarial perturbation and invisible watermark signals (CAP5610 final project)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Core ML
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "numpy>=2.5.3",
+    "scipy>=1.18.1",
+    "scikit-learn>=1.9.1",
+    "pandas>=3.0.6",
+    # Images, metrics, differentiable JPEG
+    "pillow>=12.3.0",
+    "scikit-image",   # PSNR, SSIM
+    "lpips",          # LPIPS perceptual distance
+    "kornia",         # differentiable JPEG for the JPEG-aware attack
+    # Plotting and utilities
+    "matplotlib>=3.11.2",
+    "tqdm",
+    "pyyaml",
+    "requests",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "ipykernel",
+    "pytest",
+    "nbstripout",
+    "ruff",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<1"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
