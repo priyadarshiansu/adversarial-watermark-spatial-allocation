@@ -68,6 +68,7 @@ or one of these functions, so all arms see identical processing (proposal §5, "
 | 2026-10-02 | Preprocess once: resize 299 → 224 directly (bicubic, antialiased), no crop; save PNG to `data/processed/`. | Images are already square, so cropping would only discard content. |
 | 2026-10-02 | Labels: `label = TrueLabel - 1`. | CSV is 1-indexed, torchvision is 0-indexed. |
 | 2026-10-02 | Dependencies managed with uv (`pyproject.toml` + `uv.lock`). | Faster, reproducible lockfile. |
+| 2026-10-02 | PyTorch from the CUDA 13.2 index (`cu132`) on Windows/Linux; PyPI on macOS. CPU fallback is automatic. | PyPI's Windows wheel is CPU-only; the team has local NVIDIA GPUs (RTX 4070). |
 
 ### Proposed (team to confirm)
 

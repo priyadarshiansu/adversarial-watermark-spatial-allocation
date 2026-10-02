@@ -59,6 +59,7 @@ Then, from the repo root:
 uv sync                    # creates .venv with Python 3.12 and the exact locked versions
 uv run nbstripout --install   # once per clone: strips notebook outputs on commit
 uv run pytest              # run the tests
+uv run python scripts/smoke_test.py   # end-to-end check (needs data/raw, see data/README.md)
 uv run jupyter lab         # notebooks
 ```
 
@@ -66,8 +67,17 @@ uv run jupyter lab         # notebooks
   `pyproject.toml` **and** `uv.lock` together.
 - `requirements.txt` is generated for anyone not using uv; don't edit it by hand:
   `uv export --no-hashes --no-dev --no-emit-project -o requirements.txt`
-- **GPU:** the locked PyTorch wheel is CPU-only on Windows/macOS and CUDA-enabled on Linux, so
-  Colab / FIU HPC runs get the GPU automatically. Local Windows runs are CPU-only.
+- **GPU (NVIDIA):** on Windows and Linux, uv installs PyTorch built for **CUDA 13.2** from
+  PyTorch's own index (see `[tool.uv.sources]` in `pyproject.toml`). You need an NVIDIA driver
+  that supports CUDA ≥ 13.2: run `nvidia-smi` and check "CUDA Version" in the top-right corner.
+- **No NVIDIA GPU, or an older driver:** everything still works on CPU; the code falls back
+  automatically (`awsa.utils.get_device`). macOS uses the regular PyPI build (CPU).
+  Windows-on-ARM is not supported by the CUDA index.
+- Check which device you got:
+  ```bash
+  uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+  uv run python scripts/smoke_test.py   # end-to-end check on 16 real images; prints device=cuda/cpu
+  ```
 
 ## Repository structure
 
@@ -82,6 +92,7 @@ src/awsa/            # reusable code (import as `awsa`)
   watermark.py       #   Module 4 · block-DCT watermark
   distortions.py     #   shared · uint8/JPEG round trip, resize, blur
 tests/               # pytest (fast, no downloads)
+scripts/smoke_test.py  # real ResNet-50 + real images + PGD sanity check
 notebooks/           # exploration and figures; import from awsa, outputs stripped
 scripts/  configs/   # experiment runners and their YAML configs
 data/                # CSV metadata committed; images git-ignored
