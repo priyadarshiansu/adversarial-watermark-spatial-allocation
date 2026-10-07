@@ -1,24 +1,17 @@
 import math
-from pathlib import Path
 
 import torch
-from PIL import Image
-from torchvision.transforms.functional import (
-    InterpolationMode,
-    pil_to_tensor,
-    resize,
-)
 
-from awsa.data import DATA_DIR, load_metadata
+from awsa.data import load_images, load_metadata
 from awsa.distortions import jpeg, quantize_uint8
 from awsa.masks import bottom_fraction_mask
 from awsa.metrics import bit_error_rate
 from awsa.models import load_resnet50
 from awsa.saliency import gradcam
+from awsa.utils import get_device
 from awsa.watermark import embed, extract
 
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = get_device()
 
 STRENGTHS = [0.01, 0.02, 0.04, 0.06, 0.08, 0.10]
 JPEG_QUALITIES = [90, 75, 60]
@@ -26,20 +19,6 @@ JPEG_QUALITIES = [90, 75, 60]
 MASK_AREA = 0.50
 KEY = 123
 N_IMAGES = 10
-
-
-def load_image(path: Path) -> torch.Tensor:
-    img = Image.open(path).convert("RGB")
-    x = pil_to_tensor(img).float() / 255.0
-
-    x = resize(
-        x,
-        [224, 224],
-        interpolation=InterpolationMode.BICUBIC,
-        antialias=True,
-    )
-
-    return x.unsqueeze(0)
 
 
 def main():
@@ -66,9 +45,7 @@ def main():
 
         print(f"Image {i + 1}/{N_IMAGES}: {image_id}")
 
-        path = DATA_DIR / "raw" / f"{image_id}.png"
-
-        x = load_image(path).to(DEVICE)
+        x = load_images([image_id]).to(DEVICE)
         y = torch.tensor([label], device=DEVICE)
 
         saliency = gradcam(model, x, y)

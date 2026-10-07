@@ -5,6 +5,7 @@ The region mask is treated as a secret key shared with the decoder (non-blind
 decoding with side information); see docs/interfaces.md.
 """
 import math
+
 import torch
 
 PAYLOAD_BITS = 32
@@ -131,7 +132,7 @@ def embed(
     if bits.shape[1] != PAYLOAD_BITS:
         raise ValueError(f"Expected {PAYLOAD_BITS} payload bits.")
 
-    y, cb, cr = _rgb_to_ycbcr(x)
+    y, _, _ = _rgb_to_ycbcr(x)
 
     blocks = _split_blocks(y).clone()
 

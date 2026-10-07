@@ -1,5 +1,7 @@
 import torch
+
 from . import BLOCK
+
 
 def top_fraction_mask(saliency_blocks: torch.Tensor, area: float) -> torch.Tensor:
     """Select the top-saliency fraction of 28x28 blocks.

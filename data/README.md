@@ -13,12 +13,22 @@ NIPS 2017 *Adversarial Attacks and Defences* competition (Kurakin et al., arXiv:
 data/
 ├── nips2017/
 │   ├── images.csv       # committed: ImageId, bounding box, TrueLabel, TargetClass, license, author
-│   └── categories.csv   # committed: CategoryId (1-1000) -> name
+│   ├── categories.csv   # committed: CategoryId (1-1000) -> name
+│   └── selected.csv     # committed: correctly classified ImageIds (scripts/prepare_data.py)
 ├── raw/                 # NOT committed: put the 1,000 PNGs here (data/raw/<ImageId>.png)
 └── processed/           # NOT committed: 224×224 PNGs produced by the preprocessing script
 ```
 
-After downloading, copy the contents of the Kaggle `images/` folder into `data/raw/`.
+After downloading, copy the contents of the Kaggle `images/` folder into `data/raw/`, then run
+
+```bash
+uv run python scripts/prepare_data.py
+```
+
+This resizes every image once (299 → 224, bicubic, antialiased, no crop) into
+`data/processed/` and writes `data/nips2017/selected.csv`, the images ResNet-50 classifies
+correctly when clean. Load images in code with `awsa.data.load_images(ids)`; never resize
+them yourself, so every script sees identical pixels.
 
 ### Gotchas
 

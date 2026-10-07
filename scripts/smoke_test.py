@@ -11,24 +11,15 @@ uint8 rounding, and most are undone by JPEG q=75 (why the JPEG-aware attack matt
 
 import argparse
 import time
-from pathlib import Path
 
 import torch
-from PIL import Image
-from torchvision.transforms.functional import pil_to_tensor, resize
 
-from awsa import IMAGE_SIZE
 from awsa.attacks import pgd
-from awsa.data import DATA_DIR, load_metadata
+from awsa.data import load_images, load_metadata
 from awsa.distortions import jpeg, quantize_uint8
 from awsa.metrics import attack_success
 from awsa.models import imagenet_categories, load_resnet50
 from awsa.utils import get_device, set_seed
-
-
-def load_image(path: Path) -> torch.Tensor:
-    img = pil_to_tensor(Image.open(path).convert("RGB")).float() / 255
-    return resize(img, [IMAGE_SIZE, IMAGE_SIZE], antialias=True).clamp(0, 1)
 
 
 def main() -> None:
@@ -41,13 +32,11 @@ def main() -> None:
 
     set_seed(0)
     device = get_device(args.device)
-    raw = DATA_DIR / "raw"
     meta = load_metadata().head(args.n)
-    missing = [i for i in meta.ImageId if not (raw / f"{i}.png").exists()]
-    if missing:
-        raise SystemExit(f"{len(missing)} images missing from {raw}. See data/README.md.")
-
-    x = torch.stack([load_image(raw / f"{i}.png") for i in meta.ImageId]).to(device)
+    try:
+        x = load_images(meta.ImageId).to(device)
+    except FileNotFoundError as e:
+        raise SystemExit(f"{e} See data/README.md.") from e
     y = torch.tensor(meta.label.values, device=device)
     print(f"device={device}  images={tuple(x.shape)}")
 

@@ -9,6 +9,8 @@ to x (e.g. (B, 1, H, W) pixel mask from masks.blocks_to_pixels). 1 = allowed.
 `transform` is applied to the adversarial image before the model inside the loss.
 Use it for the JPEG-aware attack (e.g. a differentiable JPEG, or a random
 JPEG approximation with eot_samples > 1 for Expectation over Transformation).
+`DifferentiableJPEG` is that transform. Results must still be validated through the real
+pipeline, `distortions.roundtrip(x_adv, jpeg_quality)`, never through the approximation.
 """
 
 from collections.abc import Callable
@@ -16,6 +18,35 @@ from collections.abc import Callable
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+
+class DifferentiableJPEG(nn.Module):
+    """Differentiable stand-in for `distortions.roundtrip(x, quality)` inside the attack loss.
+
+    uint8 quantization with a straight-through gradient, then kornia's differentiable
+    JPEG codec (Reich et al., 2024; standard IJG tables, 4:2:0 chroma, like PIL).
+    `quality` is an int, or a (low, high) range: each call then draws one quality per image
+    uniformly from it, which with `pgd(..., eot_samples > 1)` is EOT over JPEG quality.
+    H and W must be multiples of 16 (224 is).
+    """
+
+    def __init__(self, quality: int | tuple[int, int], generator: torch.Generator | None = None):
+        super().__init__()
+        self.quality = quality
+        self.generator = generator
+
+    def _qualities(self, x: torch.Tensor) -> torch.Tensor:
+        if isinstance(self.quality, int):
+            return torch.full((x.shape[0],), float(self.quality), device=x.device, dtype=x.dtype)
+        low, high = self.quality
+        q = torch.randint(low, high + 1, (x.shape[0],), generator=self.generator)
+        return q.to(x.device, x.dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from kornia.enhance import jpeg_codec_differentiable
+
+        x = x + (torch.round(x.clamp(0, 1) * 255) / 255 - x).detach()
+        return jpeg_codec_differentiable(x, self._qualities(x)).clamp(0, 1)
 
 
 def _apply_mask(delta: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:

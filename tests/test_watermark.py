@@ -1,24 +1,21 @@
 import torch
 
-from awsa.watermark import _dct2, _idct2
-
-from awsa.watermark import (
-    _dct2,
-    _idct2,
-    _embed_bit,
-    _extract_bit,
-    _split_blocks,
-    _merge_blocks,
-    _rgb_to_ycbcr,
-    _ycbcr_to_rgb,
-    _ordered_selected_blocks,
-    embed,
-    extract,
-    payload_coefficients
-)
-
 from awsa.distortions import quantize_uint8
 from awsa.masks import blocks_to_pixels
+from awsa.watermark import (
+    _dct2,
+    _embed_bit,
+    _extract_bit,
+    _idct2,
+    _merge_blocks,
+    _ordered_selected_blocks,
+    _rgb_to_ycbcr,
+    _split_blocks,
+    _ycbcr_to_rgb,
+    embed,
+    extract,
+    payload_coefficients,
+)
 
 
 def test_dct_roundtrip():

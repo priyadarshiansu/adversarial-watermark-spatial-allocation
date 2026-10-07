@@ -1,0 +1,19 @@
+# Module 2: epsilon calibration (proposal §5: 3-4 eps values on the steep part of the
+# attack-success curve, avoiding saturation). Run:
+#   uv run python scripts/calibrate_eps.py --config configs/eps_calibration.yaml
+seed: 0
+n_images: 200            # first N of data/nips2017/selected.csv
+batch_size: 25
+eps_255: [0.5, 1, 2, 3, 4, 6, 8]   # L-inf budgets in 1/255 pixel units
+steps: 10
+alpha_ratio: 0.25        # PGD step = alpha_ratio * eps
+attacks:
+  - {name: pgd}                                         # plain PGD (baseline)
+  - {name: pgd_jpeg75, jpeg_quality: 75}                # differentiable JPEG in the loss
+  - {name: pgd_eot, jpeg_quality: [50, 95], eot_samples: 4}   # EOT over JPEG quality
+regions:
+  - global               # adversarial-only arm, whole image
+  - salient              # top-saliency blocks, as in the co-located / separated arms
+mask_area: 0.50          # proposed in docs/interfaces.md (Module 4 calibration suggests 0.25)
+eval_jpeg_qualities: [null, 90, 75, 60]   # null = uint8 only; all via distortions.roundtrip
+out_dir: results/runs/eps_calibration

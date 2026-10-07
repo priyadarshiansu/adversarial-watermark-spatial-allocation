@@ -1,40 +1,18 @@
-from pathlib import Path
-
 import torch
-from PIL import Image
-from torchvision.transforms.functional import (
-    pil_to_tensor,
-    resize,
-    InterpolationMode,
-)
 
-from awsa.data import DATA_DIR, load_metadata
+from awsa.data import load_images, load_metadata
 from awsa.distortions import jpeg, quantize_uint8
 from awsa.masks import bottom_fraction_mask
 from awsa.metrics import bit_error_rate
 from awsa.models import load_resnet50
 from awsa.saliency import gradcam
+from awsa.utils import get_device
 from awsa.watermark import embed, extract
 
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = get_device()
 STRENGTH = 0.1
 MASK_AREA = 0.50
 KEY = 123
-
-
-def load_image(path: Path) -> torch.Tensor:
-    img = Image.open(path).convert("RGB")
-    x = pil_to_tensor(img).float() / 255.0
-
-    x = resize(
-        x,
-        [224, 224],
-        interpolation=InterpolationMode.BICUBIC,
-        antialias=True,
-    )
-
-    return x.unsqueeze(0)
 
 
 def main():
@@ -43,9 +21,7 @@ def main():
     image_id = meta.iloc[0].ImageId
     label = int(meta.iloc[0].label)
 
-    path = DATA_DIR / "raw" / f"{image_id}.png"
-
-    x = load_image(path).to(DEVICE)
+    x = load_images([image_id]).to(DEVICE)
     y = torch.tensor([label], device=DEVICE)
 
     print("device:", DEVICE)

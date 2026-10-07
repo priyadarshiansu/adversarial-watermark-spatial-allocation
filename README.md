@@ -59,7 +59,8 @@ Then, from the repo root:
 uv sync                    # creates .venv with Python 3.12 and the exact locked versions
 uv run nbstripout --install   # once per clone: strips notebook outputs on commit
 uv run pytest              # run the tests
-uv run python scripts/smoke_test.py   # end-to-end check (needs data/raw, see data/README.md)
+uv run python scripts/prepare_data.py  # once: resize data/raw -> data/processed, select images
+uv run python scripts/smoke_test.py   # end-to-end check (needs data, see data/README.md)
 uv run jupyter lab         # notebooks
 ```
 
@@ -83,16 +84,18 @@ uv run jupyter lab         # notebooks
 
 ```
 src/awsa/            # reusable code (import as `awsa`)
-  data.py            #   Module 1 · dataset metadata and loading
+  data.py            #   Module 1 · metadata, preprocessing, loading, image selection
   models.py          #   Module 1 · ResNet-50 wrapper that takes [0,1] pixels
-  metrics.py         #   Module 1 · ASR, BER, PSNR, SSIM, LPIPS
-  attacks.py         #   Module 2 · FGSM, masked PGD, JPEG-aware hook
+  metrics.py         #   Module 1 · ASR, confidence drop, BER, PSNR, SSIM, LPIPS
+  attacks.py         #   Module 2 · FGSM, masked PGD, differentiable-JPEG / EOT transform
   saliency.py        #   Module 3 · Grad-CAM
   masks.py           #   Module 3 · block-level masks
   watermark.py       #   Module 4 · block-DCT watermark
   distortions.py     #   shared · uint8/JPEG round trip, resize, blur
 tests/               # pytest (fast, no downloads)
 scripts/smoke_test.py  # real ResNet-50 + real images + PGD sanity check
+scripts/prepare_data.py   # Module 1 · preprocess once + select correctly classified images
+scripts/calibrate_eps.py  # Module 2 · eps sweep for plain / JPEG-aware PGD (configs/eps_calibration.yaml)
 notebooks/           # exploration and figures; import from awsa, outputs stripped
 scripts/  configs/   # experiment runners and their YAML configs
 data/                # CSV metadata committed; images git-ignored
