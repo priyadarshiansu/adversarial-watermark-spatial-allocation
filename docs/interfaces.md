@@ -20,11 +20,18 @@ convention, change it here first and tell the team.
 ### Module 1: data, models, metrics (`data.py`, `models.py`, `metrics.py`)
 ```python
 load_metadata() -> DataFrame              # images.csv + 0-indexed `label`
+load_selected_metadata() -> DataFrame     # only images ResNet-50 gets right clean (selected.csv)
+load_images(image_ids) -> (B, 3, 224, 224)  # from data/processed/; the ONLY way to load images
+preprocess_dataset() / preprocess_image(x)  # 299 -> 224 bicubic, once (scripts/prepare_data.py)
+correctly_classified(model, x, y) -> (B,) bool
 load_resnet50(device) -> nn.Module        # frozen, takes [0,1] pixels
 attack_success(logits, y) -> (B,)         # untargeted: argmax != y
+confidence_drop(logits_clean, logits_adv, y) -> (B,)  # true-class softmax prob, clean - adv
 bit_error_rate(bits_true, bits_pred) -> (B,)
 psnr(x, x_ref) / ssim(x, x_ref) / lpips_distance(x, x_ref) -> (B,)
 ```
+PSNR uses peak 1.0; SSIM is scikit-image (7×7 window, mean over RGB); LPIPS is AlexNet v0.1.
+Never resize images yourself: scripts and notebooks call `load_images`.
 
 ### Module 2: attacks (`attacks.py`)
 ```python
@@ -32,7 +39,10 @@ pgd(model, x, y, eps, alpha, steps, mask=None, random_start=False,
     transform=None, eot_samples=1, generator=None) -> x_adv
 ```
 Guarantees: `|x_adv - x|_inf <= eps`, `x_adv` in `[0, 1]`, `x_adv == x` where `mask == 0`.
-The JPEG-aware attack passes a differentiable JPEG (e.g. `kornia`) as `transform`.
+The JPEG-aware attack passes `DifferentiableJPEG(quality)` as `transform`: straight-through
+uint8 rounding, then kornia's differentiable JPEG (standard tables, 4:2:0, like PIL).
+`DifferentiableJPEG((low, high))` draws a random quality per image; with `eot_samples > 1`
+that is EOT over JPEG. Report results only after `distortions.roundtrip(x_adv, q)`.
 
 ### Module 3: saliency and masks (`saliency.py`, `masks.py`)
 ```python
@@ -68,6 +78,7 @@ or one of these functions, so all arms see identical processing (proposal §5, "
 | 2026-10-02 | Preprocess once: resize 299 → 224 directly (bicubic, antialiased), no crop; save PNG to `data/processed/`. | Images are already square, so cropping would only discard content. |
 | 2026-10-02 | Labels: `label = TrueLabel - 1`. | CSV is 1-indexed, torchvision is 0-indexed. |
 | 2026-10-02 | Dependencies managed with uv (`pyproject.toml` + `uv.lock`). | Faster, reproducible lockfile. |
+| 2026-10-07 | Image set: images ResNet-50 classifies correctly when clean, listed in `data/nips2017/selected.csv` (written by `scripts/prepare_data.py`, committed). | Proposal §5 (Statistics): attack success is only meaningful on correctly classified images. |
 | 2026-10-02 | PyTorch from the CUDA 13.2 index (`cu132`) on Windows/Linux; PyPI on macOS. CPU fallback is automatic. | PyPI's Windows wheel is CPU-only; the team has local NVIDIA GPUs (RTX 4070). |
 
 ### Proposed (team to confirm)
@@ -79,6 +90,6 @@ or one of these functions, so all arms see identical processing (proposal §5, "
 | Resize processing | Downscale then upscale back to 224 (`resize_roundtrip`), so the 8×8 grid and the mask stay valid. |
 | Budget units | Attack: L∞ ε. Watermark: embedding step size (e.g. QIM step on a mid-frequency coefficient pair). Same mask area for every masked arm. Global/global covers more area; label it, don't hide it. |
 | Mask area | 50% of blocks (392 of 784) for every masked arm, so ~12 blocks per payload bit. |
-| ε calibration | Choose ε on the adversarial-only arm at the target JPEG quality, freeze it, then run the comparisons. |
+| ε calibration | Proposal §5 asks for 3–4 ε values on the steep part of the attack-success curve (avoiding saturation), not one frozen ε. Choose them with `scripts/calibrate_eps.py` on the adversarial-only arm after the real JPEG roundtrip, freeze that set, then run the comparisons. (Updated 2026-10-07: earlier text said a single frozen ε.) |
 | Joint score | Per image: success = misclassified AND BER ≤ threshold, so paired tests work. Pareto curves remain the headline. |
 | JPEG-aware attack | Try `kornia`'s differentiable JPEG first; EOT over real JPEG is the fallback. |
