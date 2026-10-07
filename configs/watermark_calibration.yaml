@@ -1,0 +1,18 @@
+# Module 4: watermark area x strength calibration (proposal §5). Run:
+#   uv run python scripts/watermark_area_strength_sweep.py --config configs/watermark_calibration.yaml
+# Masks are the low-saliency Grad-CAM blocks (masks.bottom_fraction_mask). `strength` is the
+# minimum DCT coefficient margin |c[2,3] - c[3,2]| on Y in [0, 1] (see watermark.embed).
+seed: 0
+n_images: 100            # first N of data/nips2017/selected.csv
+key: 123                 # watermark key (block ordering), shared with the decoder
+payload_seed: 42         # payload for image i is drawn from Generator(payload_seed + i)
+candidates:              # the four finalists; same payload per image across candidates (paired)
+  - {area: 0.25, strength: 0.08}
+  - {area: 0.35, strength: 0.06}
+  - {area: 0.35, strength: 0.08}
+  - {area: 0.50, strength: 0.06}
+jpeg_qualities: [90, 75, 60]   # all via distortions.roundtrip(x, q)
+resize_scale: 0.5              # distortions.resize_roundtrip
+blur_sigma: 1.0                # distortions.gaussian_blur
+out_dir: results/runs/watermark_calibration           # per_image.csv (git-ignored)
+summary_csv: results/watermark_calibration_summary.csv  # one row per candidate (committable)

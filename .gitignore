@@ -231,3 +231,6 @@ data/processed/
 results/runs/
 # uv
 .venv/
+
+# Reading-list PDFs (the repo is public; keep notes only)
+papers/*.pdf
