@@ -74,14 +74,15 @@ uv run jupyter lab         # notebooks
 - **No NVIDIA GPU, or an older driver:** everything still works on CPU; the code falls back
   automatically (`awsa.utils.get_device`). macOS uses the regular PyPI build (CPU).
   Windows-on-ARM is not supported by the CUDA index.
-- **Pascal GPUs (e.g. the lab Quadro P1000):** CUDA 13 dropped Pascal (sm_61), so the `cu132`
-  wheels run CPU-only there. On that machine install the CUDA 12.6 build instead and leave
-  `pyproject.toml` alone (whether the whole team standardizes on `cu126` is still open):
+- **Pascal GPUs (e.g. the lab Quadro P1000):** CUDA 13 dropped Pascal (sm_61), so the locked
+  `cu132` wheels cannot execute CUDA kernels there. On that machine keep the project venv
+  activated and install the CUDA 12.6 wheels directly:
   ```bash
-  uv sync
-  uv pip install --reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126
+  uv pip install --python .venv/Scripts/python.exe --reinstall --no-deps torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu126
   ```
-  Re-run the second line after any `uv sync`, which restores the locked `cu132` wheels.
+  After that, use the venv's direct `python` / `pytest` commands. Do **not** run `uv sync`
+  or `uv run` on the P1000 machine, because project synchronization restores the incompatible
+  locked `cu132` wheels.
 - **`requirements.txt` without uv:** it pins `torch==2.14.1+cu132` for Windows/Linux, so plain
   pip needs the PyTorch index too:
   `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu132`.
@@ -123,8 +124,8 @@ Conventions every module follows (tensor shapes, masks, labels) and the decision
 
 ## Team workflow
 
-- `main` is protected: work on a branch (`module1-data-pipeline`, `module2-attack`, …) and
-  merge through a pull request.
+- Treat `main` as the stable branch: work on a feature/hardening branch and merge through a
+  pull request.
 - Run `uv run pytest` before opening a PR.
 - Notebooks are for exploration; anything reused goes into `src/awsa/` with a test.
 
