@@ -1,4 +1,9 @@
-"""Evaluation metrics (Module 1). All inputs are [0, 1] tensors (B, 3, H, W); outputs are (B,)."""
+"""Evaluation metrics (Module 1). Every function returns a per-image (B,) tensor.
+
+* attack_success / confidence_drop take classifier logits (B, 1000) and labels (B,).
+* bit_error_rate takes watermark bits (B, n_bits).
+* psnr / ssim / lpips_distance take [0, 1] images (B, 3, H, W).
+"""
 
 import torch
 

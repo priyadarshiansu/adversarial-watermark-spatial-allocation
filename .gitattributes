@@ -6,3 +6,5 @@
 *.jpg binary
 *.pdf binary
 *.pth binary
+*.ipynb filter=nbstripout
+*.ipynb diff=ipynb

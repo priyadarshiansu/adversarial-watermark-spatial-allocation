@@ -50,7 +50,7 @@ class DifferentiableJPEG(nn.Module):
 
 
 def _apply_mask(delta: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
-    return delta if mask is None else delta * mask.to(delta.dtype)
+    return delta if mask is None else delta * mask.to(device=delta.device, dtype=delta.dtype)
 
 
 def fgsm(
@@ -86,10 +86,24 @@ def pgd(
 
     Returns x_adv with ||x_adv - x||_inf <= eps, x_adv in [0, 1], and
     x_adv == x wherever mask == 0.
+
+    With `eot_samples > 1` the gradient is the mean over samples of the transformed loss
+    (Expectation over Transformation). Each sample is backpropagated on its own and the
+    gradients are accumulated, so peak memory is that of a single forward/backward pass.
+    `generator` drives the random start; it may live on the CPU while x is on the GPU.
     """
+    if steps < 1:
+        raise ValueError(f"steps must be >= 1, got {steps}")
+    if eot_samples < 1:
+        raise ValueError(f"eot_samples must be >= 1, got {eot_samples}")
+
     x = x.detach()
     if random_start:
-        noise = torch.rand(x.shape, generator=generator, device=x.device, dtype=x.dtype)
+        # Draw on the generator's own device (CPU when none is given), then move:
+        # a CPU generator cannot drive torch.rand on CUDA and vice versa.
+        gen_device = generator.device if generator is not None else torch.device("cpu")
+        noise = torch.rand(x.shape, generator=generator, dtype=x.dtype,
+                           device=gen_device).to(x.device)
         delta = _apply_mask((noise * 2 - 1) * eps, mask)
     else:
         delta = torch.zeros_like(x)
@@ -97,11 +111,11 @@ def pgd(
 
     for _ in range(steps):
         x_adv = x_adv.detach().requires_grad_(True)
-        loss = 0.0
+        grad = torch.zeros_like(x)
         for _ in range(eot_samples):
             inp = transform(x_adv) if transform is not None else x_adv
-            loss = loss + F.cross_entropy(model(inp), y)
-        (grad,) = torch.autograd.grad(loss / eot_samples, x_adv)
+            loss_k = F.cross_entropy(model(inp), y)
+            grad += torch.autograd.grad(loss_k / eot_samples, x_adv)[0].detach()
 
         step = _apply_mask(alpha * grad.sign(), mask)
         delta = torch.clamp(x_adv.detach() + step - x, -eps, eps)

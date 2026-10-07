@@ -1,8 +1,17 @@
 """Block-DCT invisible watermark (Module 4).
 
-Embeds in the luma (Y) channel so JPEG chroma subsampling does not destroy it.
-The region mask is treated as a secret key shared with the decoder (non-blind
-decoding with side information); see docs/interfaces.md.
+Each payload bit is written into the sign of the difference between two mid-frequency
+DCT coefficients, c[2,3] - c[3,2], of an 8x8 block of the luma (Y) channel. Luma only,
+so JPEG 4:2:0 chroma subsampling does not destroy it. The 32 payload bits are spread
+over the masked blocks in a keyed pseudo-random order (bit j % 32 goes to the j-th block
+of the permutation), so every bit gets several copies and is decoded by majority vote.
+
+The decoder is blind: it never sees the original image. The block mask and the integer
+key are secrets shared between the embedder and the decoder (side information), because
+Grad-CAM cannot be recomputed after attack + JPEG; see docs/interfaces.md.
+
+Public API: `embed`, `extract`, `payload_coefficients`, plus `block_bit_index` and
+`extract_soft` for the per-block mechanism analysis (proposal §5).
 """
 import math
 
@@ -12,15 +21,17 @@ PAYLOAD_BITS = 32
 
 BLOCK_SIZE = 8
 
+# The coefficient pair whose difference carries the bit (see payload_coefficients()).
+_C_POS = (2, 3)
+_C_NEG = (3, 2)
+
 
 def _dct_matrix(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     """Create the orthonormal 8x8 DCT-II transform matrix."""
     n = torch.arange(BLOCK_SIZE, device=device, dtype=dtype)
     k = torch.arange(BLOCK_SIZE, device=device, dtype=dtype).unsqueeze(1)
 
-    matrix = torch.cos(
-        math.pi / BLOCK_SIZE * (n + 0.5) * k
-    )
+    matrix = torch.cos(math.pi / BLOCK_SIZE * (n + 0.5) * k)
 
     matrix[0] *= math.sqrt(1.0 / BLOCK_SIZE)
     matrix[1:] *= math.sqrt(2.0 / BLOCK_SIZE)
@@ -29,7 +40,7 @@ def _dct_matrix(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
 
 
 def _dct2(blocks: torch.Tensor) -> torch.Tensor:
-    """Apply a 2D DCT to one or more 8x8 blocks."""
+    """Apply a 2D DCT to one or more 8x8 blocks (any leading dims)."""
     c = _dct_matrix(blocks.device, blocks.dtype)
     return c @ blocks @ c.T
 
@@ -38,6 +49,7 @@ def _idct2(coeffs: torch.Tensor) -> torch.Tensor:
     """Invert the 2D DCT."""
     c = _dct_matrix(coeffs.device, coeffs.dtype)
     return c.T @ coeffs @ c
+
 
 def _embed_bit(
     block: torch.Tensor,
@@ -52,30 +64,36 @@ def _embed_bit(
     """
     coeffs = _dct2(block.clone())
 
-    c1 = coeffs[2, 3]
-    c2 = coeffs[3, 2]
+    c1 = coeffs[_C_POS]
+    c2 = coeffs[_C_NEG]
 
     difference = c1 - c2
 
     if bit == 1:
         if difference < strength:
             adjustment = (strength - difference) / 2
-            coeffs[2, 3] += adjustment
-            coeffs[3, 2] -= adjustment
+            coeffs[_C_POS] += adjustment
+            coeffs[_C_NEG] -= adjustment
 
     else:
         if difference > -strength:
             adjustment = (difference + strength) / 2
-            coeffs[2, 3] -= adjustment
-            coeffs[3, 2] += adjustment
+            coeffs[_C_POS] -= adjustment
+            coeffs[_C_NEG] += adjustment
 
     return _idct2(coeffs)
 
-def _extract_bit(block: torch.Tensor) -> int:
-    """Recover one embedded bit from one 8x8 block."""
-    coeffs = _dct2(block)
 
-    return int(coeffs[2, 3] > coeffs[3, 2])
+def _block_margins(blocks: torch.Tensor) -> torch.Tensor:
+    """Per-block margin c[2,3] - c[3,2] for blocks of shape (..., 8, 8) -> (...)."""
+    coeffs = _dct2(blocks)
+    return coeffs[..., _C_POS[0], _C_POS[1]] - coeffs[..., _C_NEG[0], _C_NEG[1]]
+
+
+def _extract_bit(block: torch.Tensor) -> int:
+    """Recover one embedded bit from one 8x8 block (1 iff the margin is positive)."""
+    return int(_block_margins(block) > 0)
+
 
 def _split_blocks(channel: torch.Tensor) -> torch.Tensor:
     """
@@ -87,9 +105,7 @@ def _split_blocks(channel: torch.Tensor) -> torch.Tensor:
     Output:
         (B, 1, 28, 28, 8, 8)
     """
-    return channel.unfold(2, BLOCK_SIZE, BLOCK_SIZE).unfold(
-        3, BLOCK_SIZE, BLOCK_SIZE
-    )
+    return channel.unfold(2, BLOCK_SIZE, BLOCK_SIZE).unfold(3, BLOCK_SIZE, BLOCK_SIZE)
 
 
 def _merge_blocks(blocks: torch.Tensor) -> torch.Tensor:
@@ -98,11 +114,17 @@ def _merge_blocks(blocks: torch.Tensor) -> torch.Tensor:
     """
     b, c, rows, cols, h, w = blocks.shape
 
-    return (
-        blocks.permute(0, 1, 2, 4, 3, 5)
-        .contiguous()
-        .view(b, c, rows * h, cols * w)
-    )
+    return blocks.permute(0, 1, 2, 4, 3, 5).contiguous().view(b, c, rows * h, cols * w)
+
+
+def _check_capacity(ordered_blocks: list[torch.Tensor]) -> None:
+    for b, selected in enumerate(ordered_blocks):
+        if len(selected) < PAYLOAD_BITS:
+            raise ValueError(
+                f"Need at least {PAYLOAD_BITS} selected blocks, "
+                f"but image {b} has only {len(selected)}."
+            )
+
 
 def embed(
     x: torch.Tensor,
@@ -118,16 +140,23 @@ def embed(
         (B, 3, 224, 224) RGB image in [0, 1]
 
     bits:
-        (B, 32) payload bits
+        (B, 32) payload bits (int or bool)
 
     mask:
-        (B, 1, 28, 28) boolean block mask
+        (B, 1, 28, 28) boolean block mask; needs at least 32 selected blocks per image,
+        otherwise ValueError.
 
     strength:
-        separation enforced between the two DCT coefficients
+        minimum margin |c[2,3] - c[3,2]| enforced in each selected block, in
+        orthonormal-DCT units of the Y channel with Y in [0, 1]. It is a
+        coefficient-margin parameter, NOT a QIM step: a block whose coefficient
+        difference already has the right sign and size is left untouched, and
+        otherwise the change is (strength -/+ existing difference) / 2 per
+        coefficient. The distortion therefore depends on each block's own content.
 
     key:
-        determines the reproducible ordering of selected blocks
+        seeds the reproducible pseudo-random ordering of the selected blocks; the
+        ordering depends only on (mask, key), never on the batch position.
     """
     if bits.shape[1] != PAYLOAD_BITS:
         raise ValueError(f"Expected {PAYLOAD_BITS} payload bits.")
@@ -135,25 +164,15 @@ def embed(
     y, _, _ = _rgb_to_ycbcr(x)
 
     blocks = _split_blocks(y).clone()
+    cols = mask.shape[-1]
 
     ordered_blocks = _ordered_selected_blocks(mask, key)
+    _check_capacity(ordered_blocks)
 
     for b in range(x.shape[0]):
-        selected = ordered_blocks[b]
-
-        if len(selected) < PAYLOAD_BITS:
-            raise ValueError(
-                f"Need at least {PAYLOAD_BITS} selected blocks, "
-                f"but image {b} has only {len(selected)}."
-            )
-
-        for j, flat_index in enumerate(selected):
-            bit_index = j % PAYLOAD_BITS
-
-            row = int(flat_index) // 28
-            col = int(flat_index) % 28
-
-            bit = int(bits[b, bit_index].item())
+        for j, flat_index in enumerate(ordered_blocks[b].tolist()):
+            row, col = divmod(flat_index, cols)
+            bit = int(bits[b, j % PAYLOAD_BITS].item())
 
             blocks[b, 0, row, col] = _embed_bit(
                 blocks[b, 0, row, col],
@@ -162,14 +181,42 @@ def embed(
             )
 
     y_watermarked = _merge_blocks(blocks)
-    
-    #Changing Luminance Y while keeping chroma fixed
-    #is equivalent to adding same luminance change to R, G, and B
-    #Also guarantees that pixels outside selected blocks stay unchanged
 
+    # Changing luminance Y while keeping chroma fixed is equivalent to adding the
+    # same luminance change to R, G and B. Pixels outside selected blocks stay unchanged.
     delta_y = y_watermarked - y
 
-    return (x + delta_y.repeat(1,3,1,1)).clamp(0,1)
+    return (x + delta_y.repeat(1, 3, 1, 1)).clamp(0, 1)
+
+
+def block_bit_index(mask: torch.Tensor, key: int) -> torch.Tensor:
+    """Which payload bit each masked block carries.
+
+    Returns (B, 1, H, W) int64 (H, W = the mask's block grid, normally 28x28) with values
+    in 0..31 inside the mask and -1 outside. Uses the same keyed ordering as embed/extract.
+    """
+    b, _, h, w = mask.shape
+    index = torch.full((b, h * w), -1, dtype=torch.int64, device=mask.device)
+
+    for i, selected in enumerate(_ordered_selected_blocks(mask, key)):
+        index[i, selected] = torch.arange(len(selected), device=mask.device) % PAYLOAD_BITS
+
+    return index.view(b, 1, h, w)
+
+
+def extract_soft(x: torch.Tensor, mask: torch.Tensor, key: int) -> torch.Tensor:
+    """Per-block soft decision: the margin c[2,3] - c[3,2] of the Y-channel DCT.
+
+    Returns (B, 1, H, W) float32, 0 outside the mask. Positive means the block votes 1.
+    Per-block bit error: `(soft > 0) != bits[idx]` with `idx = block_bit_index(mask, key)`.
+    `key` is unused here (margins do not depend on the ordering); it is kept so the
+    signature mirrors `extract`.
+    """
+    del key
+    y, _, _ = _rgb_to_ycbcr(x)
+    margins = _block_margins(_split_blocks(y)).float()  # (B, 1, H, W)
+    return torch.where(mask.to(margins.device).bool(), margins, torch.zeros_like(margins))
+
 
 def extract(
     x: torch.Tensor,
@@ -177,57 +224,39 @@ def extract(
     key: int,
 ) -> torch.Tensor:
     """
-    Recover the 32-bit payload from the selected 8x8 blocks.
+    Recover the 32-bit payload from the selected 8x8 blocks (blind: no original needed).
 
-    Each payload bit may have been embedded in several blocks.
-    We decode every copy and use majority vote.
+    Each payload bit is embedded in several blocks. Every copy votes
+    (1 iff c[2,3] > c[3,2]) and the bit is decided by majority vote. A tied vote
+    (possible with an even number of copies) is broken by the sign of the summed
+    margin c[2,3] - c[3,2] over that bit's copies; an exactly zero sum decodes as 0.
+
+    Returns (B, 32) int64. Raises ValueError if an image has fewer than 32 masked blocks.
     """
-    y, _, _ = _rgb_to_ycbcr(x)
-    blocks = _split_blocks(y)
+    _check_capacity(_ordered_selected_blocks(mask, key))
 
-    ordered_blocks = _ordered_selected_blocks(mask, key)
+    soft = extract_soft(x, mask, key).flatten(1)  # (B, H*W)
+    index = block_bit_index(mask, key).to(soft.device).flatten(1)
+    inside = index >= 0
+    scatter_index = index.clamp(min=0)
 
-    recovered = torch.zeros(
-        (x.shape[0], PAYLOAD_BITS),
-        dtype=torch.int64,
-        device=x.device,
-    )
+    def per_bit_sum(values: torch.Tensor) -> torch.Tensor:
+        out = torch.zeros((soft.shape[0], PAYLOAD_BITS), dtype=values.dtype, device=soft.device)
+        return out.scatter_add_(1, scatter_index, torch.where(inside, values, 0))
 
-    for b in range(x.shape[0]):
-        selected = ordered_blocks[b]
+    ones = per_bit_sum((soft > 0).to(torch.int64))
+    copies = per_bit_sum(inside.to(torch.int64))
+    zeros = copies - ones
+    margin_sum = per_bit_sum(soft)
 
-        if len(selected) < PAYLOAD_BITS:
-            raise ValueError(
-                f"Need at least {PAYLOAD_BITS} selected blocks, "
-                f"but image {b} has only {len(selected)}."
-            )
-
-        votes = [[] for _ in range(PAYLOAD_BITS)]
-
-        for j, flat_index in enumerate(selected):
-            bit_index = j % PAYLOAD_BITS
-
-            row = int(flat_index) // 28
-            col = int(flat_index) % 28
-
-            vote = _extract_bit(
-                blocks[b, 0, row, col]
-            )
-
-            votes[bit_index].append(vote)
-
-        for bit_index in range(PAYLOAD_BITS):
-            ones = sum(votes[bit_index])
-            zeros = len(votes[bit_index]) - ones
-
-            recovered[b, bit_index] = int(ones > zeros)
-
-    return recovered
+    recovered = torch.where(ones == zeros, margin_sum > 0, ones > zeros)
+    return recovered.to(torch.int64).to(x.device)
 
 
 def payload_coefficients() -> list[tuple[int, int]]:
     """Return the DCT coefficient positions used to encode watermark bits."""
-    return [(2, 3), (3, 2)]
+    return [_C_POS, _C_NEG]
+
 
 def _rgb_to_ycbcr(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
@@ -253,6 +282,10 @@ def _ycbcr_to_rgb(
 ) -> torch.Tensor:
     """
     Convert Y, Cb, Cr channels back to RGB.
+
+    Test-only: not used by embed/extract (they add the luma change to R, G and B
+    directly). Kept because tests/test_watermark.py checks the colour transform
+    round-trips with it.
     """
     cb_shifted = cb - 0.5
     cr_shifted = cr - 0.5
@@ -263,34 +296,27 @@ def _ycbcr_to_rgb(
 
     return torch.cat([r, g, b], dim=1).clamp(0, 1)
 
+
 def _ordered_selected_blocks(
     mask: torch.Tensor,
     key: int,
 ) -> list[torch.Tensor]:
     """
-    Return the selected block indices for each image,
-    shuffled deterministically using `key`.
+    Return the selected flat block indices for each image, shuffled deterministically
+    with `key` alone (not the batch position, so an image decodes the same alone or
+    inside a batch).
 
-    mask shape: (B, 1, 28, 28)
-
-    Each returned tensor contains flattened block indices
-    in the range 0..783.
+    mask shape: (B, 1, H, W), normally (B, 1, 28, 28); indices are in 0..H*W-1.
     """
     ordered = []
 
     for b in range(mask.shape[0]):
-        selected = torch.nonzero(
-            mask[b, 0].reshape(-1),
-            as_tuple=False,
-        ).squeeze(1)
+        selected = torch.nonzero(mask[b, 0].reshape(-1).cpu(), as_tuple=False).squeeze(1)
 
         generator = torch.Generator()
-        generator.manual_seed(key + b)
+        generator.manual_seed(key)
 
-        permutation = torch.randperm(
-            len(selected),
-            generator=generator,
-        )
+        permutation = torch.randperm(len(selected), generator=generator)
 
         ordered.append(selected[permutation].to(mask.device))
 

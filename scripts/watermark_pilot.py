@@ -1,104 +1,57 @@
-import torch
+"""Module 4: single-image watermark pilot (sanity check before the calibration sweep).
 
-from awsa.data import load_images, load_metadata
-from awsa.distortions import jpeg, quantize_uint8
+    uv run python scripts/watermark_pilot.py --area 0.5 --strength 0.08
+
+Embeds one payload in the lowest-saliency blocks of the first selected image and prints the
+BER after the uint8 roundtrip and several JPEG qualities, plus PSNR and max pixel change.
+"""
+
+import argparse
+
+import torch
+from watermark_area_strength_sweep import DEFAULT_CONFIG, load_config, payload
+
+from awsa.data import load_images, load_selected_metadata
+from awsa.distortions import roundtrip
 from awsa.masks import bottom_fraction_mask
-from awsa.metrics import bit_error_rate
+from awsa.metrics import bit_error_rate, psnr
 from awsa.models import load_resnet50
 from awsa.saliency import gradcam
-from awsa.utils import get_device
+from awsa.utils import get_device, set_seed
 from awsa.watermark import embed, extract
 
-DEVICE = get_device()
-STRENGTH = 0.1
-MASK_AREA = 0.50
-KEY = 123
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("--area", type=float, default=0.50)
+    parser.add_argument("--strength", type=float, default=0.08)
+    parser.add_argument("--jpeg", type=int, nargs="+", default=[95, 90, 80, 75, 60])
+    parser.add_argument("--device", default=None)
+    args = parser.parse_args()
+    cfg = load_config(args.config)
 
-def main():
-    meta = load_metadata()
+    set_seed(cfg["seed"])
+    device = get_device(args.device)
+    row = load_selected_metadata().iloc[0]
+    x = load_images([row.ImageId]).to(device)
+    y = torch.tensor([int(row.label)], device=device)
+    print(f"device={device}  image={row.ImageId}")
 
-    image_id = meta.iloc[0].ImageId
-    label = int(meta.iloc[0].label)
+    saliency = gradcam(load_resnet50(device), x, y)
+    mask = bottom_fraction_mask(saliency, area=args.area)
+    bits = payload(cfg, 0, device)
+    x_wm = embed(x, bits, mask, strength=args.strength, key=cfg["key"])
 
-    x = load_images([image_id]).to(DEVICE)
-    y = torch.tensor([label], device=DEVICE)
+    print("payload:", bits[0].tolist())
+    for q in [None, *args.jpeg]:
+        recovered = extract(roundtrip(x_wm, q), mask, key=cfg["key"])
+        label = "uint8" if q is None else f"JPEG q{q}"
+        print(f"{label:>9} BER: {bit_error_rate(bits, recovered).item():.4f}")
 
-    print("device:", DEVICE)
-    print("image:", image_id)
-
-    # Module 3: create a low-saliency watermark region.
-    model = load_resnet50(DEVICE)
-    saliency = gradcam(model, x, y)
-
-    # Keep the mask on CPU for the current watermark implementation.
-    mask = bottom_fraction_mask(
-        saliency.cpu(),
-        area=MASK_AREA,
-    )
-
-    # Fixed 32-bit payload for reproducibility.
-    generator = torch.Generator().manual_seed(42)
-    bits = torch.randint(
-        0,
-        2,
-        (1, 32),
-        generator=generator,
-        dtype=torch.int64,
-    ).to(DEVICE)
-
-    watermarked = embed(
-        x,
-        bits,
-        mask,
-        strength=STRENGTH,
-        key=KEY,
-    )
-
-    print("\nOriginal bits:")
-    print(bits[0].tolist())
-
-    # No processing
-    recovered = extract(watermarked, mask, key=KEY)
-    ber = bit_error_rate(bits, recovered)
-
-    print(f"\nNo processing BER: {ber.item():.4f}")
-
-    # Normal uint8 image round-trip
-    processed = quantize_uint8(watermarked)
-    recovered = extract(processed, mask, key=KEY)
-
-    print(
-        f"Uint8 BER: "
-        f"{bit_error_rate(bits, recovered).item():.4f}"
-    )
-
-    # Real JPEG
-    for quality in [95, 90, 80, 75, 60]:
-        processed = jpeg(
-            quantize_uint8(watermarked),
-            quality,
-        )
-
-        recovered = extract(
-            processed,
-            mask,
-            key=KEY,
-        )
-
-        ber = bit_error_rate(bits, recovered)
-
-        print(
-            f"JPEG q{quality} BER: "
-            f"{ber.item():.4f}"
-        )
-
-    max_delta = (watermarked - x).abs().max().item()
-
-    print(
-        f"\nMaximum pixel change: "
-        f"{max_delta * 255:.2f}/255"
-    )
+    x_saved = roundtrip(x_wm)
+    print(f"\nPSNR (uint8): {psnr(x_saved, x).item():.2f} dB")
+    print(f"max pixel change: {(x_saved - x).abs().max().item() * 255:.0f}/255")
 
 
 if __name__ == "__main__":

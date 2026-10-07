@@ -59,3 +59,16 @@ def test_correctly_classified(tiny_model, images):
     ok = correctly_classified(tiny_model, images, pred, batch_size=1)
     assert ok.all()
     assert not correctly_classified(tiny_model, images, (pred + 1) % 10).any()
+
+
+def test_selected_metadata_is_ordered_unique_subset():
+    from awsa.data import load_selected_metadata
+
+    full = load_metadata()
+    sel = load_selected_metadata()
+    assert len(sel) > 0
+    assert sel.ImageId.is_unique
+    assert set(sel.ImageId) <= set(full.ImageId)
+    order = {iid: i for i, iid in enumerate(full.ImageId)}
+    positions = [order[i] for i in sel.ImageId]
+    assert positions == sorted(positions)

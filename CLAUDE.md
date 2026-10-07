@@ -38,8 +38,11 @@ uv export --no-hashes --no-dev --no-emit-project -o requirements.txt   # after a
 - Every reported metric goes through `distortions.roundtrip` / `distortions.*` so all
   experimental arms see identical uint8 + JPEG processing.
 - Perturbation budgets are in pixel units (e.g. `eps = 2/255`).
-- Functions that raise `NotImplementedError("Module N")` are owned by that module's team member.
-  Keep their signatures; changing an interface means updating `docs/interfaces.md` first.
+- Each `src/awsa` module is owned by a team member (see `docs/interfaces.md`). Keep the public
+  signatures; changing an interface means updating `docs/interfaces.md` first.
+- Mask area, the ε set and the watermark strengths are *pending calibration*: parameterise
+  them in `configs/`, never hard-code a final value, and never tune them per arm.
+- Per-image result dumps go to `results/runs/` (git-ignored); commit only small summary CSVs.
 
 ## Rules
 

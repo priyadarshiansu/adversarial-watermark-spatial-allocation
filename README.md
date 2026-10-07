@@ -74,6 +74,17 @@ uv run jupyter lab         # notebooks
 - **No NVIDIA GPU, or an older driver:** everything still works on CPU; the code falls back
   automatically (`awsa.utils.get_device`). macOS uses the regular PyPI build (CPU).
   Windows-on-ARM is not supported by the CUDA index.
+- **Pascal GPUs (e.g. the lab Quadro P1000):** CUDA 13 dropped Pascal (sm_61), so the `cu132`
+  wheels run CPU-only there. On that machine install the CUDA 12.6 build instead and leave
+  `pyproject.toml` alone (whether the whole team standardizes on `cu126` is still open):
+  ```bash
+  uv sync
+  uv pip install --reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126
+  ```
+  Re-run the second line after any `uv sync`, which restores the locked `cu132` wheels.
+- **`requirements.txt` without uv:** it pins `torch==2.14.1+cu132` for Windows/Linux, so plain
+  pip needs the PyTorch index too:
+  `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu132`.
 - Check which device you got:
   ```bash
   uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
@@ -93,13 +104,16 @@ src/awsa/            # reusable code (import as `awsa`)
   watermark.py       #   Module 4 · block-DCT watermark
   distortions.py     #   shared · uint8/JPEG round trip, resize, blur
 tests/               # pytest (fast, no downloads)
-scripts/smoke_test.py  # real ResNet-50 + real images + PGD sanity check
+  utils.py           #   shared · set_seed, get_device
+scripts/smoke_test.py  # real ResNet-50 + real images + PGD + processing sanity check
 scripts/prepare_data.py   # Module 1 · preprocess once + select correctly classified images
-scripts/calibrate_eps.py  # Module 2 · eps sweep for plain / JPEG-aware PGD (configs/eps_calibration.yaml)
+scripts/calibrate_eps.py  # Module 2 · eps × mask-area sweep for plain / JPEG-aware PGD (configs/eps_calibration.yaml)
+scripts/watermark_area_strength_sweep.py  # Module 4 · area × strength calibration (configs/watermark_calibration.yaml)
+scripts/watermark_pilot.py, watermark_strength_sweep.py  # Module 4 · smaller pilots
 notebooks/           # exploration and figures; import from awsa, outputs stripped
 scripts/  configs/   # experiment runners and their YAML configs
 data/                # CSV metadata committed; images git-ignored
-results/  figures/   # experiment outputs and plots
+results/  figures/   # small summary CSVs and plots are committed; results/runs/ (per-image dumps) is git-ignored
 docs/                # proposal, interfaces & decisions, progress updates
 papers/              # reading notes (no PDFs: the repo is public)
 ```
@@ -116,7 +130,14 @@ Conventions every module follows (tensor shapes, masks, labels) and the decision
 
 ## Status
 
-Environment, ResNet-50 baseline and single-image FGSM/PGD done
-([`docs/progress_update_01.md`](docs/progress_update_01.md)). Repo reorganized into the
-`awsa` package with uv. Next: Module 1 data pipeline (preprocessing + clean baseline on
-the NeurIPS 2017 set).
+Modules 1–4 are implemented, tested and hardened (data pipeline and selected image set,
+masked / JPEG-aware PGD, Grad-CAM block masks, luma block-DCT watermark, canonical uint8 /
+JPEG / resize / blur processing). Next, on the lab GPU:
+
+1. `uv run python scripts/calibrate_eps.py` and
+   `uv run python scripts/watermark_area_strength_sweep.py` to choose the mask area, the ε set
+   and the watermark strengths (candidates and the decision rule are in
+   [`docs/interfaces.md`](docs/interfaces.md#pending-calibration-frozen-after-scriptscalibrate_epspy-and-scriptswatermark_area_strength_sweeppy-are-run-on-the-lab-pc)).
+2. Freeze those in the decisions log.
+3. Build the single experiment runner for the six conditions and both application orders
+   (week-4 Decision Gate).
