@@ -74,7 +74,7 @@ block; bit `j % 32` goes to the `j`-th block of a key-seeded permutation of the 
 decoding is a majority vote per bit with ties broken by the summed margin. `strength` is a
 coefficient-margin parameter in orthonormal-DCT units of Y ∈ [0, 1]. It is **not** a QIM step:
 the pixel change a block receives depends on that block's own coefficient difference, so the same
-`strength` costs more distortion in textured (salient) blocks than in flat ones. See the decisions
+`strength` can produce different distortion across blocks because their existing DCT coefficients differ; salient and low-saliency regions are therefore measured rather than assumed equivalent. See the decisions
 log ("Matched distortion") for how the arms are compared despite this.
 
 ### Shared processing (`distortions.py`)
@@ -104,7 +104,7 @@ attack success.
 | 2026-10-02 | Dependencies managed with uv (`pyproject.toml` + `uv.lock`). | Faster, reproducible lockfile. |
 | 2026-10-07 | Image set: images ResNet-50 classifies correctly when clean, listed in `data/nips2017/selected.csv` (written by `scripts/prepare_data.py`, committed). | Proposal §5 (Statistics): attack success is only meaningful on correctly classified images. |
 | 2026-10-02 | PyTorch from the CUDA 13.2 index (`cu132`) on Windows/Linux; PyPI on macOS. CPU fallback is automatic. | PyPI's Windows wheel is CPU-only; the team has local NVIDIA GPUs (RTX 4070). Pascal cards (Quadro P1000) need `cu126`, see README; whether to standardize on it is open. |
-| 2026-10-07 | Classifier weights: torchvision `ResNet50_Weights.IMAGENET1K_V2`, fed our direct 224 resize (no 232/centre-crop). Clean accuracy on the dev set: 964/1000. | V2 is the stronger checkpoint; the preprocessing mismatch costs nothing measurable. Don't switch weights mid-project: `selected.csv` depends on them. |
+| 2026-10-07 | Classifier weights: torchvision `ResNet50_Weights.IMAGENET1K_V2`, fed our direct 224 resize (no 232/centre-crop). Clean accuracy on the dev set: 963/1000. | V2 is the frozen checkpoint for this project, used with the direct 299→224 preprocessing above. Don't switch weights or preprocessing mid-project: `selected.csv` depends on them. |
 | 2026-10-07 | Watermark colour space: luma (Y) only; the same ΔY is added to R, G, B so chroma is untouched. | JPEG subsamples chroma 4:2:0. The mechanism analysis measures perturbation energy in the Y-channel DCT. |
 | 2026-10-07 | Decoder knowledge: blind decoding. The region mask and the key are shared secrets between owner and decoder; the original image is never needed. Grad-CAM is not recomputed at decode time. | Grad-CAM cannot be recomputed reliably after attack + JPEG. State this in the threat model. |
 | 2026-10-07 | Watermark scheme: coefficient-pair ordering on DCT(2,3)/(3,2) with minimum change (see Module 4 above), not QIM. `strength` is a coefficient margin. | Implemented and calibrated this way; changing to QIM would invalidate the calibration. The content-dependent distortion is handled by matching measured distortion (next row). |
